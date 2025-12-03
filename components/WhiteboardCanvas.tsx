@@ -156,107 +156,83 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       };
   };
 
+  // Generic intersection solver for center-to-point rays
+  // Returns the scaling factor 't' such that center + t * vector is on the boundary
+  const getIntersectionT = (type: ToolType, dx: number, dy: number, hw: number, hh: number): number => {
+      if (dx === 0 && dy === 0) return 1;
+      
+      // Avoid division by zero issues by using a small epsilon if dimension is 0
+      const safeHw = Math.max(hw, 0.001);
+      const safeHh = Math.max(hh, 0.001);
+
+      if (type === 'circle') {
+          // Ellipse equation: x^2/a^2 + y^2/b^2 = 1
+          // Line: x=t*dx, y=t*dy
+          // t = 1 / sqrt((dx/a)^2 + (dy/b)^2)
+          return 1 / Math.sqrt(Math.pow(dx / safeHw, 2) + Math.pow(dy / safeHh, 2));
+      } else if (type === 'diamond') {
+          // Diamond equation: |x|/a + |y|/b = 1
+          // t = 1 / (|dx|/a + |dy|/b)
+          return 1 / (Math.abs(dx) / safeHw + Math.abs(dy) / safeHh);
+      } else {
+          // Rectangle (Ray-Box)
+          // t = min(a/|dx|, b/|dy|)
+          const tx = dx !== 0 ? safeHw / Math.abs(dx) : Infinity;
+          const ty = dy !== 0 ? safeHh / Math.abs(dy) : Infinity;
+          return Math.min(tx, ty);
+      }
+  };
+
   const getConnectionPoint = (element: CanvasElement, fromPoint: Point): Point => {
-      // 1. Normalize Element Bounds
-      const w = Math.abs(element.width || 0);
-      const h = Math.abs(element.height || 0);
-      // Determine center based on current x, y (which is top-left) + half dimensions
-      // Note: If width/height were negative during drawing, x/y is still the "start" point in Konva,
-      // but visually we treat the bounding box.
-      // However, our normalized render logic usually fixes w/h to be positive or handles x/y offset.
-      // Let's assume standard normalized box for the calculation:
-      const cx = element.x + (element.width || 0) / 2;
-      const cy = element.y + (element.height || 0) / 2;
-      const center = { x: cx, y: cy };
+      // 1. Identify Anchor and Dimensions
+      // Circle and Diamond are drawn centered at (x,y) due to offsetX/Y logic in rendering
+      // Rect, Text, Image are drawn from top-left (x,y)
+      const isCenteredAnchor = element.type === 'circle' || element.type === 'diamond';
+      
+      // Actual Dimensions
+      const width = element.width || 0;
+      const height = element.height || 0;
+      const scaleX = element.scaleX || 1;
+      const scaleY = element.scaleY || 1;
+      
+      // Half-widths (bounding box radii)
+      const hw = Math.abs(width * scaleX) / 2;
+      const hh = Math.abs(height * scaleY) / 2;
 
-      // 2. Rotate 'fromPoint' into the element's local coordinate system (un-rotated)
+      // Pivot Point (The (x,y) coordinate of the element)
+      const pivot = { x: element.x, y: element.y };
+
+      // 2. Rotate external point into local space (relative to Pivot)
+      // Rotate 'fromPoint' around 'pivot' by '-rotation'
       const rotation = element.rotation || 0;
-      const localFrom = rotatePoint(fromPoint, center, -rotation);
+      const unrotatedFrom = rotatePoint(fromPoint, pivot, -rotation);
 
-      let intersection: Point = { x: cx, y: cy };
-
-      // 3. Calculate intersection in local axis-aligned space
-      if (element.type === 'circle') {
-          intersection = getEllipseIntersection(w, h, cx, cy, localFrom);
-      } else if (element.type === 'diamond') {
-          intersection = getDiamondIntersection(w, h, cx, cy, localFrom);
-      } else {
-          // Default to Rectangle (also covers Image, Text)
-          intersection = getRectIntersection(w, h, cx, cy, localFrom);
-      }
-
-      // 4. Rotate point back to global space
-      return rotatePoint(intersection, center, rotation);
-  };
-
-  const getRectIntersection = (w: number, h: number, cx: number, cy: number, p: Point): Point => {
-      // Vector from center to point
-      const dx = p.x - cx;
-      const dy = p.y - cy;
+      // 3. Determine Vector from Visual Center to Point
+      // Visual Center relative to Pivot:
+      // If Centered Anchor: (0,0)
+      // If Corner Anchor: (width*scaleX/2, height*scaleY/2)
+      const centerOffset = isCenteredAnchor 
+          ? { x: 0, y: 0 } 
+          : { x: width * scaleX / 2, y: height * scaleY / 2 };
       
-      // Prevent division by zero
-      if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return { x: cx + w/2, y: cy };
+      const visualCenter = { x: pivot.x + centerOffset.x, y: pivot.y + centerOffset.y };
+      
+      // Vector from Visual Center to Unrotated External Point (in local axis-aligned space)
+      const dx = unrotatedFrom.x - visualCenter.x;
+      const dy = unrotatedFrom.y - visualCenter.y;
 
-      // Calculate slopes
-      const slope = Math.abs(dy / dx);
-      const boxSlope = h / w;
+      // 4. Calculate Intersection 't'
+      const t = getIntersectionT(element.type, dx, dy, hw, hh);
 
-      if (slope <= boxSlope) {
-          // Intersects Left or Right edge
-          const signX = dx > 0 ? 1 : -1;
-          const x = cx + signX * (w / 2);
-          const y = cx === p.x ? cy : cy + (dy / dx) * (x - cx);
-          return { x, y };
-      } else {
-          // Intersects Top or Bottom edge
-          const signY = dy > 0 ? 1 : -1;
-          const y = cy + signY * (h / 2);
-          const x = cy === p.y ? cx : cx + (dx / dy) * (y - cy);
-          return { x, y };
-      }
-  };
-
-  const getEllipseIntersection = (w: number, h: number, cx: number, cy: number, p: Point): Point => {
-      // Angle from center to point
-      const angle = Math.atan2(p.y - cy, p.x - cx);
-      // Parametric equation for ellipse
-      const radiusX = w / 2;
-      const radiusY = h / 2;
-      return {
-          x: cx + radiusX * Math.cos(angle),
-          y: cy + radiusY * Math.sin(angle)
+      // 5. Calculate Intersection Point in Unrotated Space
+      const intersectionRel = { x: dx * t, y: dy * t };
+      const intersectionUnrotated = { 
+          x: visualCenter.x + intersectionRel.x, 
+          y: visualCenter.y + intersectionRel.y 
       };
-  };
 
-  const getDiamondIntersection = (w: number, h: number, cx: number, cy: number, p: Point): Point => {
-      const dx = p.x - cx;
-      const dy = p.y - cy;
-      
-      if (dx === 0 && dy === 0) return { x: cx, y: cy };
-
-      const halfW = w / 2;
-      const halfH = h / 2;
-
-      // Diamond edge equation in local centered coords: |x|/hw + |y|/hh = 1
-      // Ray equation: y = (dy/dx) * x
-      // Substitute y: |x|/hw + |(dy/dx)*x|/hh = 1
-      // |x| * (1/hw + |dy/dx|/hh) = 1
-      // |x| = 1 / (1/hw + |slope|/hh)
-      
-      const absSlope = Math.abs(dy / dx);
-      // Special case for vertical line
-      if (dx === 0) return { x: cx, y: cy + (dy > 0 ? halfH : -halfH) };
-      
-      const absX = 1 / (1/halfW + absSlope/halfH);
-      const absY = absX * absSlope;
-
-      const signX = dx > 0 ? 1 : -1;
-      const signY = dy > 0 ? 1 : -1;
-
-      return {
-          x: cx + signX * absX,
-          y: cy + signY * absY
-      };
+      // 6. Rotate back to Global Space
+      return rotatePoint(intersectionUnrotated, pivot, rotation);
   };
 
   // --- Selection & Transformer ---
