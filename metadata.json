@@ -1,0 +1,5 @@
+{
+  "name": "LocalBoard",
+  "description": "A high-performance, local-first interactive whiteboard with infinite canvas, drawing tools, and object manipulation.",
+  "requestFramePermissions": []
+}
