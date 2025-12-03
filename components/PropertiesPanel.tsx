@@ -3,12 +3,14 @@ import { ShapeStyle } from '../types';
 import { COLORS, BACKGROUND_COLORS, FONTS } from '../constants';
 import { 
   Minus, 
-  MoreHorizontal, 
   ArrowDownToLine, 
   ArrowDown, 
   ArrowUp, 
   ArrowUpToLine,
-  Type
+  Type,
+  ArrowRight,
+  ArrowLeft,
+  Circle
 } from 'lucide-react';
 
 interface PropertiesPanelProps {
@@ -175,6 +177,59 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             >
                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 12c1-3 3 3 5 0s3-3 5 0s3 3 5 0" /></svg>
             </button>
+        </div>
+      </div>
+
+      {/* --- Arrow Type --- */}
+      <div className="mb-4">
+        <label className="text-xs text-gray-500 font-semibold mb-2 block">Arrow type</label>
+        <div className="flex gap-2">
+            <button
+                onClick={() => onChange({ arrowType: 'straight' })}
+                className={`flex-1 h-8 rounded-md flex items-center justify-center bg-gray-50 hover:bg-gray-100 transition-colors ${currentStyle.arrowType === 'straight' ? 'bg-blue-100 ring-1 ring-blue-500 text-blue-700' : 'text-gray-600'}`}
+                title="Straight"
+            >
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2">
+                   <path d="M5 15l10-10m0 0l-4 0m4 0l0 4" />
+                </svg>
+            </button>
+             <button
+                onClick={() => onChange({ arrowType: 'curved' })}
+                className={`flex-1 h-8 rounded-md flex items-center justify-center bg-gray-50 hover:bg-gray-100 transition-colors ${currentStyle.arrowType === 'curved' ? 'bg-blue-100 ring-1 ring-blue-500 text-blue-700' : 'text-gray-600'}`}
+                title="Curved"
+            >
+                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 16c4 0 8-12 12-12m0 0l-4 0m4 0l0 4" />
+                 </svg>
+            </button>
+             <button
+                onClick={() => onChange({ arrowType: 'elbow' })}
+                className={`flex-1 h-8 rounded-md flex items-center justify-center bg-gray-50 hover:bg-gray-100 transition-colors ${currentStyle.arrowType === 'elbow' ? 'bg-blue-100 ring-1 ring-blue-500 text-blue-700' : 'text-gray-600'}`}
+                title="Elbow"
+            >
+                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 16l6 0l0-12l6 0m0 0l-4 4m4-4l-4-4" />
+                 </svg>
+            </button>
+        </div>
+      </div>
+
+      {/* --- Arrow Heads --- */}
+      <div className="mb-4">
+        <label className="text-xs text-gray-500 font-semibold mb-2 block">Arrowheads</label>
+        <div className="flex gap-4">
+            {/* Start */}
+            <div className="flex-1 flex gap-1 bg-gray-50 p-1 rounded-md justify-center">
+                 <button onClick={() => onChange({ startArrowHead: 'none' })} className={`p-1 rounded hover:bg-gray-200 ${currentStyle.startArrowHead === 'none' ? 'text-blue-600 bg-blue-100' : 'text-gray-500'}`} title="None"><Minus size={14} /></button>
+                 <button onClick={() => onChange({ startArrowHead: 'arrow' })} className={`p-1 rounded hover:bg-gray-200 ${currentStyle.startArrowHead === 'arrow' ? 'text-blue-600 bg-blue-100' : 'text-gray-500'}`} title="Arrow"><ArrowLeft size={14} /></button>
+                 <button onClick={() => onChange({ startArrowHead: 'dot' })} className={`p-1 rounded hover:bg-gray-200 ${currentStyle.startArrowHead === 'dot' ? 'text-blue-600 bg-blue-100' : 'text-gray-500'}`} title="Dot"><Circle size={10} /></button>
+            </div>
+            {/* End */}
+            <div className="flex-1 flex gap-1 bg-gray-50 p-1 rounded-md justify-center">
+                 <button onClick={() => onChange({ endArrowHead: 'none' })} className={`p-1 rounded hover:bg-gray-200 ${currentStyle.endArrowHead === 'none' ? 'text-blue-600 bg-blue-100' : 'text-gray-500'}`} title="None"><Minus size={14} /></button>
+                 <button onClick={() => onChange({ endArrowHead: 'arrow' })} className={`p-1 rounded hover:bg-gray-200 ${currentStyle.endArrowHead === 'arrow' ? 'text-blue-600 bg-blue-100' : 'text-gray-500'}`} title="Arrow"><ArrowRight size={14} /></button>
+                 <button onClick={() => onChange({ endArrowHead: 'dot' })} className={`p-1 rounded hover:bg-gray-200 ${currentStyle.endArrowHead === 'dot' ? 'text-blue-600 bg-blue-100' : 'text-gray-500'}`} title="Dot"><Circle size={10} /></button>
+            </div>
         </div>
       </div>
 

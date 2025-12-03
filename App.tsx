@@ -209,6 +209,9 @@ const App: React.FC = () => {
                   roughness: el.roughness,
                   edges: el.edges || 'sharp',
                   fontFamily: el.fontFamily || 'Arial',
+                  startArrowHead: el.startArrowHead || 'none',
+                  endArrowHead: el.endArrowHead || 'arrow',
+                  arrowType: el.arrowType || 'straight',
               });
           }
       }

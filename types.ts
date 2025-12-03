@@ -1,5 +1,8 @@
 export type ToolType = 'select' | 'hand' | 'rectangle' | 'diamond' | 'circle' | 'arrow' | 'line' | 'scribble' | 'text' | 'image' | 'eraser';
 
+export type ArrowHead = 'none' | 'arrow' | 'dot';
+export type ArrowType = 'straight' | 'curved' | 'elbow';
+
 export interface Point {
   x: number;
   y: number;
@@ -29,6 +32,11 @@ export interface CanvasElement {
   scaleX?: number; // For flipping (1 or -1 usually)
   scaleY?: number;
 
+  // Arrow specific
+  startArrowHead?: ArrowHead;
+  endArrowHead?: ArrowHead;
+  arrowType?: ArrowType;
+
   // Connections
   startBindingId?: string;
   endBindingId?: string;
@@ -52,4 +60,7 @@ export interface ShapeStyle {
   roughness: number;
   edges: 'sharp' | 'round';
   fontFamily: string;
+  startArrowHead: ArrowHead;
+  endArrowHead: ArrowHead;
+  arrowType: ArrowType;
 }

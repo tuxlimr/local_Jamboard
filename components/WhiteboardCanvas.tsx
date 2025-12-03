@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Stage, Layer, Rect, Circle, Line, Arrow, Text, Transformer, RegularPolygon } from 'react-konva';
+import { Stage, Layer, Rect, Circle, Line, Arrow, Text, Transformer, RegularPolygon, Group } from 'react-konva';
 import Konva from 'konva';
 import { CanvasElement, Point, ToolType, ShapeStyle } from '../types';
 import { ZoomIn, ZoomOut } from 'lucide-react';
@@ -220,11 +220,15 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     }
 
     const id = crypto.randomUUID();
+    
+    // For Lines/Arrows/Scribbles, we use x=0,y=0 and absolute points to avoid double-offset issues
+    const isLinear = tool === 'arrow' || tool === 'line' || tool === 'scribble';
+
     const newElement: CanvasElement = {
       id,
       type: tool,
-      x: pos.x,
-      y: pos.y,
+      x: isLinear ? 0 : pos.x,
+      y: isLinear ? 0 : pos.y,
       width: 0,
       height: 0,
       scaleX: 1,
@@ -237,6 +241,9 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       roughness: currentStyle.roughness,
       edges: currentStyle.edges,
       fontFamily: currentStyle.fontFamily,
+      startArrowHead: currentStyle.startArrowHead,
+      endArrowHead: currentStyle.endArrowHead,
+      arrowType: currentStyle.arrowType,
       rotation: 0,
       points: [pos.x, pos.y], 
       text: tool === 'text' ? 'Type here' : '',
@@ -270,7 +277,10 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     } else if (element.type === 'scribble') {
       element.points = [...(element.points || []), pos.x, pos.y];
     } else if (element.type === 'arrow' || element.type === 'line') {
-        element.points = [element.points![0], element.points![1], pos.x, pos.y];
+        // Ensure we have start and end points
+        const startX = element.points![0];
+        const startY = element.points![1];
+        element.points = [startX, startY, pos.x, pos.y];
     }
 
     const newElements = [...elements];
@@ -316,6 +326,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         setElements(prev => prev.slice(0, -1));
         elementDeleted = true;
     } else if ((lastElement.type === 'arrow' || lastElement.type === 'line') && lastElement.points && lastElement.points.length < 4) {
+         // Prevent tiny lines
          const dx = lastElement.points[2] - lastElement.points[0];
          const dy = lastElement.points[3] - lastElement.points[1];
          if (Math.sqrt(dx*dx + dy*dy) < 5) {
@@ -396,13 +407,9 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
                     const scaleX = node.scaleX();
                     const scaleY = node.scaleY();
                     
-                    // Reset scale on node to 1, bake into width/height, but PRESERVE direction (flip) in scaleX/Y
+                    // Reset scale on node to 1
                     node.scaleX(1);
                     node.scaleY(1);
-                    
-                    // Logic: 
-                    // New Width = Old Width * ABS(ScaleX)
-                    // New ScaleX (Direction) = Old ScaleX * Sign(ScaleX)
                     
                     const newScaleX = (el.scaleX || 1) * Math.sign(scaleX);
                     const newScaleY = (el.scaleY || 1) * Math.sign(scaleY);
@@ -412,8 +419,6 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
                         x: node.x(),
                         y: node.y(),
                         rotation: node.rotation(),
-                        // For shapes that use points (scribble/arrow/line), we'd need to transform points. 
-                        // For now, simpler shapes:
                         width: (el.type !== 'scribble' && el.type !== 'arrow' && el.type !== 'line') 
                             ? (el.width || 0) * Math.abs(scaleX) 
                             : el.width,
@@ -502,7 +507,28 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
               const target = elements.find(e => e.id === el.endBindingId);
               if (target) end = getConnectionPoint(target, start);
           }
-          return { ...el, points: [start.x, start.y, end.x, end.y] };
+          
+          let points = [start.x, start.y, end.x, end.y];
+
+          // Compute path based on arrowType
+          if (el.arrowType === 'elbow') {
+             // Step horizontal first: Start -> (MidX, StartY) -> (MidX, EndY) -> End
+             const midX = (start.x + end.x) / 2;
+             points = [start.x, start.y, midX, start.y, midX, end.y, end.x, end.y];
+          } else if (el.arrowType === 'curved') {
+             // For quadratic curve in Konva we need [start, control, end]
+             // A simple control point offset from midpoint
+             const midX = (start.x + end.x) / 2;
+             const midY = (start.y + end.y) / 2;
+             const diffX = end.x - start.x;
+             const diffY = end.y - start.y;
+             // Perpendicular offset
+             const offsetX = -diffY * 0.2;
+             const offsetY = diffX * 0.2;
+             points = [start.x, start.y, midX + offsetX, midY + offsetY, end.x, end.y];
+          }
+
+          return { ...el, points };
       }
       return el;
   }
@@ -530,27 +556,20 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
              const element = getRenderElement(rawEl);
              const isBeingDrawn = isDrawing && i === elements.length - 1;
              
-             const shapeProps = {
+             // Base Props for all shapes
+             const baseProps = {
                  key: element.id,
                  id: element.id,
                  x: element.x,
                  y: element.y,
-                 scaleX: element.scaleX || 1, // Apply flip
+                 scaleX: element.scaleX || 1, 
                  scaleY: element.scaleY || 1,
                  rotation: element.rotation,
-                 stroke: element.strokeColor,
-                 strokeWidth: element.strokeWidth,
                  opacity: element.opacity,
-                 draggable: tool === 'select' && !element.startBindingId && !element.endBindingId, 
-                 dash: getDashArray(element.strokeStyle, element.strokeWidth),
-                 shadowColor: hoveredElementId === element.id ? '#3b82f6' : 'black',
-                 shadowBlur: hoveredElementId === element.id ? 15 : (element.roughness > 0 ? 5 : 0), 
-                 shadowOpacity: hoveredElementId === element.id ? 0.6 : (element.roughness > 0 ? 0.3 : 0),
-                 shadowOffset: hoveredElementId === element.id ? {x:0,y:0} : { x: element.roughness, y: element.roughness },
-                 hitStrokeWidth: 20,
+                 draggable: tool === 'select' && !element.startBindingId && !element.endBindingId,
                  onDragEnd: handleDragEnd,
                  onTransformEnd: handleTransformEnd,
-                 listening: !isBeingDrawn, 
+                 listening: !isBeingDrawn,
                  onClick: (e: Konva.KonvaEventObject<MouseEvent>) => {
                      if (tool === 'eraser') { e.cancelBubble = true; }
                      if (tool === 'select') {
@@ -569,15 +588,28 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
                  }
              };
 
+             // Shadow/Stroke visual props
+             const styleProps = {
+                 stroke: element.strokeColor,
+                 strokeWidth: element.strokeWidth,
+                 dash: getDashArray(element.strokeStyle, element.strokeWidth),
+                 shadowColor: hoveredElementId === element.id ? '#3b82f6' : 'black',
+                 shadowBlur: hoveredElementId === element.id ? 15 : (element.roughness > 0 ? 5 : 0), 
+                 shadowOpacity: hoveredElementId === element.id ? 0.6 : (element.roughness > 0 ? 0.3 : 0),
+                 shadowOffset: hoveredElementId === element.id ? {x:0,y:0} : { x: element.roughness, y: element.roughness },
+                 hitStrokeWidth: 20,
+             };
+
              if (element.type === 'rectangle') {
-               return <Rect {...shapeProps} width={element.width} height={element.height} fill={element.fillColor} cornerRadius={element.edges === 'round' ? 10 : 0} />;
+               return <Rect {...baseProps} {...styleProps} width={element.width} height={element.height} fill={element.fillColor} cornerRadius={element.edges === 'round' ? 10 : 0} />;
              } else if (element.type === 'diamond') {
                  const w = element.width || 0;
                  const h = element.height || 0;
                  const size = Math.max(Math.abs(w), Math.abs(h));
                  return (
                      <RegularPolygon 
-                        {...shapeProps}
+                        {...baseProps}
+                        {...styleProps}
                         sides={4}
                         radius={size / 1.414}
                         scaleX={(w / size) * (element.scaleX || 1)} 
@@ -588,15 +620,66 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
                      />
                  );
              } else if (element.type === 'circle') {
-               return <Circle {...shapeProps} radius={Math.abs((element.width || 0) + (element.height || 0)) / 4} fill={element.fillColor} offsetX={-(element.width || 0)/2} offsetY={-(element.height || 0)/2} />;
+               return <Circle {...baseProps} {...styleProps} radius={Math.abs((element.width || 0) + (element.height || 0)) / 4} fill={element.fillColor} offsetX={-(element.width || 0)/2} offsetY={-(element.height || 0)/2} />;
              } else if (element.type === 'scribble') {
-                 return <Line {...shapeProps} points={element.points} tension={element.edges === 'round' ? 0.5 : 0} lineCap={element.edges === 'round' ? 'round' : 'butt'} lineJoin={element.edges === 'round' ? 'round' : 'miter'} fill={undefined} />;
+                 return <Line {...baseProps} {...styleProps} points={element.points} tension={element.edges === 'round' ? 0.5 : 0} lineCap={element.edges === 'round' ? 'round' : 'butt'} lineJoin={element.edges === 'round' ? 'round' : 'miter'} fill={undefined} />;
              } else if (element.type === 'arrow') {
-                 return <Arrow {...shapeProps} points={element.points} fill={element.strokeColor} pointerLength={10} pointerWidth={10} lineCap={element.edges === 'round' ? 'round' : 'butt'} lineJoin={element.edges === 'round' ? 'round' : 'miter'} />;
+                 const points = element.points || [];
+                 const startHead = element.startArrowHead || 'none';
+                 const endHead = element.endArrowHead || 'arrow';
+                 const dotRadius = element.strokeWidth + 2;
+                 const arrowType = element.arrowType || 'straight';
+                 const tension = arrowType === 'curved' ? 0.5 : 0;
+                 
+                 // Dots need to be at actual start/end, which might be different index depending on arrow type geometry
+                 const startX = points[0];
+                 const startY = points[1];
+                 const endX = points[points.length - 2];
+                 const endY = points[points.length - 1];
+
+                 return (
+                    <Group {...baseProps}>
+                        <Arrow 
+                            points={points}
+                            stroke={styleProps.stroke}
+                            strokeWidth={styleProps.strokeWidth}
+                            dash={styleProps.dash}
+                            fill={element.strokeColor}
+                            pointerLength={10}
+                            pointerWidth={10}
+                            tension={tension}
+                            lineCap={element.edges === 'round' ? 'round' : 'butt'}
+                            lineJoin={element.edges === 'round' ? 'round' : 'miter'}
+                            pointerAtBeginning={startHead === 'arrow'}
+                            pointerAtEnding={endHead === 'arrow'}
+                            hitStrokeWidth={20}
+                            shadowColor={styleProps.shadowColor}
+                            shadowBlur={styleProps.shadowBlur}
+                            shadowOpacity={styleProps.shadowOpacity}
+                            shadowOffset={styleProps.shadowOffset}
+                        />
+                        {startHead === 'dot' && points.length >= 2 && (
+                            <Circle 
+                                x={startX} 
+                                y={startY} 
+                                radius={dotRadius} 
+                                fill={element.strokeColor} 
+                            />
+                        )}
+                        {endHead === 'dot' && points.length >= 2 && (
+                            <Circle 
+                                x={endX} 
+                                y={endY} 
+                                radius={dotRadius} 
+                                fill={element.strokeColor} 
+                            />
+                        )}
+                    </Group>
+                 );
              } else if (element.type === 'line') {
-                 return <Line {...shapeProps} points={element.points} lineCap={element.edges === 'round' ? 'round' : 'butt'} lineJoin={element.edges === 'round' ? 'round' : 'miter'} />;
+                 return <Line {...baseProps} {...styleProps} points={element.points} lineCap={element.edges === 'round' ? 'round' : 'butt'} lineJoin={element.edges === 'round' ? 'round' : 'miter'} />;
              } else if (element.type === 'text') {
-                 return <Text {...shapeProps} text={element.text} fontSize={20} fontFamily={element.fontFamily || 'Arial'} fill={element.strokeColor} stroke={undefined} visible={editingId !== element.id} onDblClick={() => startEditing(element)} />;
+                 return <Text {...baseProps} {...styleProps} text={element.text} fontSize={20} fontFamily={element.fontFamily || 'Arial'} fill={element.strokeColor} stroke={undefined} visible={editingId !== element.id} onDblClick={() => startEditing(element)} />;
              }
              return null;
           })}

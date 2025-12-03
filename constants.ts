@@ -87,6 +87,9 @@ export const DEFAULT_STYLE: ShapeStyle = {
   roughness: 0,
   edges: 'sharp',
   fontFamily: 'Arial',
+  startArrowHead: 'none',
+  endArrowHead: 'arrow',
+  arrowType: 'straight',
 };
 
 export const GRID_SIZE = 20;
