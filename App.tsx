@@ -24,6 +24,9 @@ const App: React.FC = () => {
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number, y: number } | null>(null);
   const [clipboard, setClipboard] = useState<CanvasElement[]>([]);
 
+  // Image Upload
+  const [pendingImage, setPendingImage] = useState<File | null>(null);
+
   // --- Undo/Redo Logic ---
   const saveHistory = useCallback((newElements: CanvasElement[]) => {
       const newHistory = history.slice(0, historyStep + 1);
@@ -137,6 +140,11 @@ const App: React.FC = () => {
       }));
   };
 
+  const handleImageUpload = (file: File) => {
+    setPendingImage(file);
+    // Logic to actually process image is delegated to Canvas where viewport info is available
+  };
+
   // --- Keyboard Shortcuts ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -166,7 +174,14 @@ const App: React.FC = () => {
         // Tool switching (0-9)
         const matchedTool = TOOLS.find(t => t.key === e.key.toUpperCase());
         if (matchedTool) {
-            setTool(matchedTool.id);
+            if (matchedTool.id !== 'image') {
+              setTool(matchedTool.id);
+            } else {
+              // Image logic is handled by Toolbar click currently, 
+              // but if we wanted shortcut to work we'd need to trigger input.
+              // For now, simpler to just select tool or ignore since file input is in Toolbar.
+              // setTool('image'); // Can set tool, but doesn't trigger open.
+            }
         }
 
         if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
@@ -267,6 +282,7 @@ const App: React.FC = () => {
         canRedo={historyStep < history.length - 1}
         isLocked={isToolLocked}
         onToggleLock={() => setIsToolLocked(!isToolLocked)}
+        onImageUpload={handleImageUpload}
       />
       
       <PropertiesPanel 
@@ -286,6 +302,8 @@ const App: React.FC = () => {
         setSelectedIds={setSelectedIds}
         isLocked={isToolLocked}
         onContextMenu={handleContextMenu}
+        pendingImage={pendingImage}
+        onImageProcessed={() => setPendingImage(null)}
       />
 
       <ContextMenu 

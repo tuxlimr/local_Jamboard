@@ -17,6 +17,7 @@ export interface CanvasElement {
   height?: number;
   points?: number[]; // For lines/arrows/scribbles
   text?: string;     // For text elements
+  imageUrl?: string; // For image elements
   
   // Style Props
   strokeColor: string;

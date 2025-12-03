@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { TOOLS } from '../constants';
 import { ToolType } from '../types';
 import { Lock, Library } from 'lucide-react';
@@ -12,6 +12,7 @@ interface ToolbarProps {
   canRedo: boolean;
   isLocked: boolean;
   onToggleLock: () => void;
+  onImageUpload: (file: File) => void;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({ 
@@ -22,11 +23,40 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   canUndo,
   canRedo,
   isLocked,
-  onToggleLock
+  onToggleLock,
+  onImageUpload
 }) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleToolClick = (toolId: ToolType) => {
+    if (toolId === 'image') {
+      fileInputRef.current?.click();
+    } else {
+      setTool(toolId);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      onImageUpload(file);
+    }
+    // Reset value so same file can be selected again
+    if (e.target) e.target.value = '';
+  };
+
   return (
     <div className="fixed top-4 left-1/2 transform -translate-x-1/2 bg-white rounded-lg shadow-md border border-gray-200 p-1 flex items-center gap-1 z-50 select-none">
       
+      {/* Hidden File Input */}
+      <input 
+        type="file" 
+        ref={fileInputRef} 
+        className="hidden" 
+        accept="image/*" 
+        onChange={handleFileChange} 
+      />
+
       {/* Lock Button */}
       <button
         onClick={onToggleLock}
@@ -49,7 +79,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         return (
           <button
             key={tool.id}
-            onClick={() => setTool(tool.id)}
+            onClick={() => handleToolClick(tool.id)}
             className={`relative flex items-center justify-center w-9 h-9 rounded-md transition-all ${
               isActive
                 ? 'bg-violet-100 text-violet-700'

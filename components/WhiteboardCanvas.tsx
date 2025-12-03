@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Stage, Layer, Rect, Circle, Line, Arrow, Text, Transformer, RegularPolygon, Group } from 'react-konva';
+import { Stage, Layer, Rect, Circle, Line, Arrow, Text, Transformer, RegularPolygon, Group, Image as KonvaImage } from 'react-konva';
 import Konva from 'konva';
 import { CanvasElement, Point, ToolType, ShapeStyle } from '../types';
 import { ZoomIn, ZoomOut } from 'lucide-react';
@@ -14,7 +14,22 @@ interface WhiteboardCanvasProps {
   setSelectedIds: (ids: string[]) => void;
   isLocked: boolean;
   onContextMenu: (e: Konva.KonvaEventObject<PointerEvent>) => void;
+  pendingImage: File | null;
+  onImageProcessed: () => void;
 }
+
+const URLImage = ({ element, ...baseProps }: { element: CanvasElement } & any) => {
+    const [image, setImage] = useState<HTMLImageElement | null>(null);
+    
+    useEffect(() => {
+        if (!element.imageUrl) return;
+        const img = new window.Image();
+        img.src = element.imageUrl;
+        img.onload = () => setImage(img);
+    }, [element.imageUrl]);
+
+    return <KonvaImage image={image} {...baseProps} />;
+};
 
 export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   elements,
@@ -25,7 +40,9 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   selectedIds,
   setSelectedIds,
   isLocked,
-  onContextMenu
+  onContextMenu,
+  pendingImage,
+  onImageProcessed
 }) => {
   const stageRef = useRef<Konva.Stage>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
@@ -47,6 +64,68 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   // Hover state for smart arrows
   const [hoveredElementId, setHoveredElementId] = useState<string | null>(null);
 
+  // --- Image Processing ---
+  useEffect(() => {
+    if (pendingImage) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const dataURL = e.target?.result as string;
+            if (dataURL) {
+                const img = new window.Image();
+                img.onload = () => {
+                    // Calculate center position
+                    const viewportCenterX = (-position.x + window.innerWidth / 2) / scale;
+                    const viewportCenterY = (-position.y + window.innerHeight / 2) / scale;
+                    
+                    // Limit max width/height to reasonable size relative to viewport
+                    const maxDim = 500 / scale;
+                    let width = img.width;
+                    let height = img.height;
+                    
+                    if (width > maxDim || height > maxDim) {
+                        const ratio = width / height;
+                        if (width > height) {
+                            width = maxDim;
+                            height = maxDim / ratio;
+                        } else {
+                            height = maxDim;
+                            width = maxDim * ratio;
+                        }
+                    }
+
+                    const newElement: CanvasElement = {
+                        id: crypto.randomUUID(),
+                        type: 'image',
+                        x: viewportCenterX - width / 2,
+                        y: viewportCenterY - height / 2,
+                        width: width,
+                        height: height,
+                        imageUrl: dataURL,
+                        strokeColor: 'transparent',
+                        strokeWidth: 0,
+                        fillColor: 'transparent',
+                        opacity: 1,
+                        strokeStyle: 'solid',
+                        roughness: 0,
+                        edges: 'sharp',
+                        fontFamily: 'Arial',
+                        rotation: 0,
+                        scaleX: 1,
+                        scaleY: 1
+                    };
+                    
+                    setElements(prev => [...prev, newElement]);
+                    setTool('select');
+                    onImageProcessed();
+                };
+                img.src = dataURL;
+            }
+        };
+        reader.readAsDataURL(pendingImage);
+    }
+  }, [pendingImage, position, scale]);
+
+
   // --- Helpers ---
   const getRelativePointerPosition = () => {
     const node = stageRef.current;
@@ -63,80 +142,122 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       return undefined;
   };
 
-  // Calculate connection point on the boundary of a shape
-  const getConnectionPoint = (element: CanvasElement, targetPoint: Point): Point => {
-      const w = element.width || 0;
-      const h = element.height || 0;
-      // Center might need adjustment if scaled/flipped? 
-      // Simplified: Assume x,y is top-left even if flipped for calculation logic
-      const cx = element.x + w / 2;
-      const cy = element.y + h / 2;
-      
-      if (element.type === 'rectangle') {
-          return getRectIntersection(element, targetPoint, cx, cy);
+  // --- Geometry Helpers for Arrow Connections ---
+
+  const rotatePoint = (p: Point, center: Point, angleDeg: number): Point => {
+      const angleRad = (angleDeg * Math.PI) / 180;
+      const cos = Math.cos(angleRad);
+      const sin = Math.sin(angleRad);
+      const dx = p.x - center.x;
+      const dy = p.y - center.y;
+      return {
+          x: center.x + dx * cos - dy * sin,
+          y: center.y + dx * sin + dy * cos
+      };
+  };
+
+  const getConnectionPoint = (element: CanvasElement, fromPoint: Point): Point => {
+      // 1. Normalize Element Bounds
+      const w = Math.abs(element.width || 0);
+      const h = Math.abs(element.height || 0);
+      // Determine center based on current x, y (which is top-left) + half dimensions
+      // Note: If width/height were negative during drawing, x/y is still the "start" point in Konva,
+      // but visually we treat the bounding box.
+      // However, our normalized render logic usually fixes w/h to be positive or handles x/y offset.
+      // Let's assume standard normalized box for the calculation:
+      const cx = element.x + (element.width || 0) / 2;
+      const cy = element.y + (element.height || 0) / 2;
+      const center = { x: cx, y: cy };
+
+      // 2. Rotate 'fromPoint' into the element's local coordinate system (un-rotated)
+      const rotation = element.rotation || 0;
+      const localFrom = rotatePoint(fromPoint, center, -rotation);
+
+      let intersection: Point = { x: cx, y: cy };
+
+      // 3. Calculate intersection in local axis-aligned space
+      if (element.type === 'circle') {
+          intersection = getEllipseIntersection(w, h, cx, cy, localFrom);
       } else if (element.type === 'diamond') {
-           return getDiamondIntersection(element, targetPoint, cx, cy);
-      } else if (element.type === 'circle') {
-          const angle = Math.atan2(targetPoint.y - cy, targetPoint.x - cx);
-          const r = Math.abs(w + h) / 4; 
-          return {
-              x: cx + r * Math.cos(angle),
-              y: cy + r * Math.sin(angle)
-          };
+          intersection = getDiamondIntersection(w, h, cx, cy, localFrom);
+      } else {
+          // Default to Rectangle (also covers Image, Text)
+          intersection = getRectIntersection(w, h, cx, cy, localFrom);
       }
-      return { x: cx, y: cy };
-  }
 
-  const getRectIntersection = (el: CanvasElement, target: Point, cx: number, cy: number): Point => {
-      const w = Math.abs(el.width || 0);
-      const h = Math.abs(el.height || 0);
-      const halfW = w / 2;
-      const halfH = h / 2;
+      // 4. Rotate point back to global space
+      return rotatePoint(intersection, center, rotation);
+  };
 
-      const dx = target.x - cx;
-      const dy = target.y - cy;
+  const getRectIntersection = (w: number, h: number, cx: number, cy: number, p: Point): Point => {
+      // Vector from center to point
+      const dx = p.x - cx;
+      const dy = p.y - cy;
       
-      if (dx === 0 && dy === 0) return { x: cx, y: cy };
+      // Prevent division by zero
+      if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return { x: cx + w/2, y: cy };
 
-      const slopeRay = Math.abs(dy / dx);
-      const slopeDiag = halfH / halfW;
+      // Calculate slopes
+      const slope = Math.abs(dy / dx);
+      const boxSlope = h / w;
 
-      if (slopeRay <= slopeDiag) {
+      if (slope <= boxSlope) {
+          // Intersects Left or Right edge
           const signX = dx > 0 ? 1 : -1;
-          const x = cx + signX * halfW;
-          const y = cx === target.x ? cy : cy + (dy / dx) * (x - cx);
+          const x = cx + signX * (w / 2);
+          const y = cx === p.x ? cy : cy + (dy / dx) * (x - cx);
           return { x, y };
       } else {
+          // Intersects Top or Bottom edge
           const signY = dy > 0 ? 1 : -1;
-          const y = cy + signY * halfH;
-          const x = cy === target.y ? cx : cx + (dx / dy) * (y - cy);
+          const y = cy + signY * (h / 2);
+          const x = cy === p.y ? cx : cx + (dx / dy) * (y - cy);
           return { x, y };
       }
-  }
+  };
 
-  const getDiamondIntersection = (el: CanvasElement, target: Point, cx: number, cy: number): Point => {
-      const w = Math.abs(el.width || 0);
-      const h = Math.abs(el.height || 0);
+  const getEllipseIntersection = (w: number, h: number, cx: number, cy: number, p: Point): Point => {
+      // Angle from center to point
+      const angle = Math.atan2(p.y - cy, p.x - cx);
+      // Parametric equation for ellipse
+      const radiusX = w / 2;
+      const radiusY = h / 2;
+      return {
+          x: cx + radiusX * Math.cos(angle),
+          y: cy + radiusY * Math.sin(angle)
+      };
+  };
+
+  const getDiamondIntersection = (w: number, h: number, cx: number, cy: number, p: Point): Point => {
+      const dx = p.x - cx;
+      const dy = p.y - cy;
+      
+      if (dx === 0 && dy === 0) return { x: cx, y: cy };
+
       const halfW = w / 2;
       const halfH = h / 2;
 
-      const dx = target.x - cx;
-      const dy = target.y - cy;
-
-      if (dx === 0 && dy === 0) return { x: cx, y: cy };
-
+      // Diamond edge equation in local centered coords: |x|/hw + |y|/hh = 1
+      // Ray equation: y = (dy/dx) * x
+      // Substitute y: |x|/hw + |(dy/dx)*x|/hh = 1
+      // |x| * (1/hw + |dy/dx|/hh) = 1
+      // |x| = 1 / (1/hw + |slope|/hh)
+      
       const absSlope = Math.abs(dy / dx);
-      const xLocal = dx === 0 ? 0 : 1 / (1/halfW + absSlope/halfH);
-      const yLocal = dx === 0 ? halfH : xLocal * absSlope;
+      // Special case for vertical line
+      if (dx === 0) return { x: cx, y: cy + (dy > 0 ? halfH : -halfH) };
+      
+      const absX = 1 / (1/halfW + absSlope/halfH);
+      const absY = absX * absSlope;
 
       const signX = dx > 0 ? 1 : -1;
       const signY = dy > 0 ? 1 : -1;
 
       return {
-          x: cx + signX * xLocal,
-          y: cy + signY * yLocal
+          x: cx + signX * absX,
+          y: cy + signY * absY
       };
-  }
+  };
 
   // --- Selection & Transformer ---
   useEffect(() => {
@@ -258,6 +379,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     
     if (tool === 'arrow') {
         const shape = e.target;
+        // Don't bind to current arrow being drawn (it might block hit test, so we set listening=false during draw, but just in case)
         if (shape && shape !== e.target.getStage() && shape.id()) {
             setHoveredElementId(shape.id());
         } else {
@@ -680,6 +802,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
                  return <Line {...baseProps} {...styleProps} points={element.points} lineCap={element.edges === 'round' ? 'round' : 'butt'} lineJoin={element.edges === 'round' ? 'round' : 'miter'} />;
              } else if (element.type === 'text') {
                  return <Text {...baseProps} {...styleProps} text={element.text} fontSize={20} fontFamily={element.fontFamily || 'Arial'} fill={element.strokeColor} stroke={undefined} visible={editingId !== element.id} onDblClick={() => startEditing(element)} />;
+             } else if (element.type === 'image' && element.imageUrl) {
+                 return <URLImage element={element} {...baseProps} />;
              }
              return null;
           })}
